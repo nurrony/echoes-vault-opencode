@@ -303,7 +303,7 @@ const parseCommandFrontmatter = (cmd: string): { template: string; description?:
   return { template: match[2], description: frontmatter.description, agent: frontmatter.agent }
 }
 
-export const OpenCodeEchoes: Plugin = async ({ directory }) => {
+const OpenCodeEchoes: Plugin = async ({ directory }) => {
   const paths = resolveVaultPaths(directory)
   const indexFile = path.join(paths.vault, "index.md")
 
@@ -534,5 +534,5 @@ export const OpenCodeEchoes: Plugin = async ({ directory }) => {
   }
 }
 
-export default OpenCodeEchoes
-export { OpenCodeEchoes as server }
+export default { server: OpenCodeEchoes }
+export { OpenCodeEchoes }

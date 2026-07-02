@@ -4,6 +4,12 @@
   "description": "EchoesVault — persistent memory plugin for OpenCode. Obsidian-style knowledge base with daily logs, encyclopedia pages, and session resumption.",
   "type": "module",
   "main": "index.ts",
+  "exports": {
+    "./server": {
+      "import": "./index.ts",
+      "types": "./index.ts"
+    }
+  },
   "files": [
     "index.ts"
   ],
