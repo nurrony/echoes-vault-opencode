@@ -74,7 +74,7 @@ const tui: TuiPlugin = async (api) => {
         const statusDesc = () => {
           const s = state()
           if (!s || !s.initialized) return null
-          if (s.session.saved) return "Vault memorized session data"
+          if (s.session.saved) return "Final memory saved by /echoes-end"
           if (s.session.started) return null
           return null
         }

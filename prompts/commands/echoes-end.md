@@ -6,6 +6,8 @@ agent: build
 # SYSTEM MESSAGE: Session Distillation (Distill & Save)
 Our current session is coming to an end. Your task is to crystallize the knowledge we've gained today and commit it to EchoesVault.
 
+This command is the user's explicit approval to finalize the session. Never invoke the final-memory tool outside this command, including after an ordinary task completion.
+
 Adhere to the principle of technical density: we do not need a transcript of our chat. We need dry architectural facts, bug fixes, applied configurations, and explicit decisions. Remember to use `> [!warning] DEPRECATED` tags if we rewrote legacy logic today.
 
 ## ACTION

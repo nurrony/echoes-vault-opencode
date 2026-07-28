@@ -100,6 +100,8 @@ Reads the last 3 daily logs and the full index, then summarizes where you left o
 ```
 The AI distills the session into a dense technical summary, writes new encyclopedia pages for any concepts decided today, and updates the index. All via a single tool call.
 
+Vault status is never automatic: the user controls its transitions with `/echoes-init`, `/echoes-start`, and `/echoes-end`. In particular, `Memory Saved` is shown only after `/echoes-end`. Agents may add intermediate scratchpad notes during work, but those notes do not change the session status.
+
 ---
 
 ### Slash commands reference

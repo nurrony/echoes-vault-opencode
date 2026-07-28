@@ -188,6 +188,14 @@ const parseCommandFrontmatter = (cmd: string): { template: string; description?:
   return { template: match[2], description: frontmatter.description, agent: frontmatter.agent }
 }
 
+const statusActions = {
+  "echoes-init": "init",
+  "echoes-start": "start",
+  "echoes-end": "end",
+} as const
+
+type StatusAction = (typeof statusActions)[keyof typeof statusActions]
+
 const OpenCodeEchoes: Plugin = async ({ directory }) => {
   const pluginDir = path.dirname(new URL(import.meta.url).pathname)
 
@@ -229,10 +237,11 @@ const OpenCodeEchoes: Plugin = async ({ directory }) => {
   await ensureCommands(directory, commands)
   await ensureSkills(directory, skills)
 
+  // Sidebar status can change only through the matching user-invoked command.
+  const authorizedStatusActions = new Map<string, StatusAction>()
+
   const state = await readState(directory)
   state.pluginVersion = await getPluginVersion()
-  state.session.started = false
-  state.session.saved = false
   state.stats = await collectStats(paths)
   await writeState(directory, state)
 
@@ -244,10 +253,17 @@ const OpenCodeEchoes: Plugin = async ({ directory }) => {
         input.command[name.replace(".md", "")] = { template, description, agent }
       }
     },
+    "command.execute.before": async (input) => {
+      const command = input.command.replace(/^\//, "") as keyof typeof statusActions
+      const action = statusActions[command]
+      if (action) {
+        authorizedStatusActions.set(input.sessionID, action)
+      }
+    },
     tool: {
       commit_memory_to_echoes_vault: tool({
         description:
-          "Save session memory to EchoesVault. Writes a daily summary, creates new knowledge base pages, and updates the Vault index. Call this at session end to persist all context.",
+          "Save final session memory to EchoesVault. This succeeds only after the user explicitly runs /echoes-end; never call it merely because a task is complete.",
         args: {
           dailySummary: tool.schema
             .string()
@@ -285,7 +301,14 @@ const OpenCodeEchoes: Plugin = async ({ directory }) => {
             .optional()
             .describe("Lines to find and replace in place within EchoesVault/index.md"),
         },
-        async execute(args, _ctx) {
+        async execute(args, ctx) {
+          if (authorizedStatusActions.get(ctx.sessionID) !== "end") {
+            return [
+              "Final memory was not saved.",
+              "Only an explicit user /echoes-end command can save final memory and set the status to Memory Saved.",
+            ].join("\n")
+          }
+
           const today = getDateStr()
 
           await ensureVaultDirs(paths)
@@ -334,6 +357,7 @@ const OpenCodeEchoes: Plugin = async ({ directory }) => {
           st.session.lastSave = new Date().toISOString()
           st.stats = await collectStats(paths)
           await writeState(directory, st)
+          authorizedStatusActions.delete(ctx.sessionID)
 
           return [
             `✅ Memory committed to EchoesVault.`,
@@ -454,26 +478,36 @@ const OpenCodeEchoes: Plugin = async ({ directory }) => {
       }),
       echoes_activate_vault: tool({
         description:
-          "Mark the EchoesVault as activated. Called automatically during /echoes-init to register the vault in the status tracker.",
+          "Mark the EchoesVault as activated. This succeeds only after the user explicitly runs /echoes-init.",
         args: {},
-        async execute(_args, _ctx) {
+        async execute(_args, ctx) {
+          if (authorizedStatusActions.get(ctx.sessionID) !== "init") {
+            return "Vault status was not changed. Only an explicit user /echoes-init command can activate EchoesVault."
+          }
+
           const st = await readState(directory)
           st.initialized = true
           st.stats = await collectStats(paths)
           await writeState(directory, st)
+          authorizedStatusActions.delete(ctx.sessionID)
           return "EchoesVault activated."
         },
       }),
       echoes_start_session: tool({
         description:
-          "Mark the current EchoesVault session as started. Called automatically during /echoes-start to update the status tracker.",
+          "Mark the current EchoesVault session as started. This succeeds only after the user explicitly runs /echoes-start.",
         args: {},
-        async execute(_args, _ctx) {
+        async execute(_args, ctx) {
+          if (authorizedStatusActions.get(ctx.sessionID) !== "start") {
+            return "Vault status was not changed. Only an explicit user /echoes-start command can start an EchoesVault session."
+          }
+
           const st = await readState(directory)
           st.session.started = true
           st.session.saved = false
           st.session.lastStart = new Date().toISOString()
           await writeState(directory, st)
+          authorizedStatusActions.delete(ctx.sessionID)
           return "EchoesVault session started."
         },
       }),
