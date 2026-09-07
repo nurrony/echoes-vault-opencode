@@ -2,191 +2,30 @@ import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
+import { fileURLToPath } from "node:url"
+import { runEchoes } from "./runtime.ts"
 
-const getDateStr = (): string => {
-  const d = new Date()
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  return `${year}-${month}-${day}`
-}
+const PLUGIN_ROOT = path.dirname(fileURLToPath(import.meta.url))
 
-type VaultPaths = {
-  vault: string
-  raw: string
-  pages: string
-  daily: string
-  assets: string
-}
+const parseCommandFrontmatter = (
+  command: string,
+): { template: string; description?: string; agent?: string } => {
+  const match = command.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
+  if (!match) return { template: command }
 
-type VaultStats = {
-  totalPages: number
-  totalDailyLogs: number
-  deprecatedPages: number
-}
-
-type EchoesState = {
-  version: number
-  pluginVersion: string
-  initialized: boolean
-  session: {
-    started: boolean
-    saved: boolean
-    lastStart: string | null
-    lastSave: string | null
-  }
-  stats: VaultStats
-}
-
-const STATE_FILENAME = ".opencode/echoes-state.json"
-
-const getPluginVersion = async (): Promise<string> => {
-  try {
-    const pkgPath = path.join(path.dirname(new URL(import.meta.url).pathname), "package.json")
-    const pkg = JSON.parse(await fs.readFile(pkgPath, "utf-8"))
-    return pkg.version || "0.0.0"
-  } catch {
-    return "0.0.0"
-  }
-}
-
-const defaultState = (): EchoesState => ({
-  version: 1,
-  pluginVersion: "0.0.0",
-  initialized: false,
-  session: {
-    started: false,
-    saved: false,
-    lastStart: null,
-    lastSave: null,
-  },
-  stats: {
-    totalPages: 0,
-    totalDailyLogs: 0,
-    deprecatedPages: 0,
-  },
-})
-
-const readState = async (directory: string): Promise<EchoesState> => {
-  try {
-    const raw = await fs.readFile(path.join(directory, STATE_FILENAME), "utf-8")
-    return JSON.parse(raw) as EchoesState
-  } catch {
-    return defaultState()
-  }
-}
-
-const writeState = async (directory: string, state: EchoesState): Promise<void> => {
-  const filePath = path.join(directory, STATE_FILENAME)
-  await fs.mkdir(path.dirname(filePath), { recursive: true })
-  await fs.writeFile(filePath, JSON.stringify(state, null, 2))
-}
-
-const resolveVaultPaths = (directory: string): VaultPaths => {
-  const vault = path.join(directory, "EchoesVault")
-  return {
-    vault,
-    raw: path.join(vault, "raw"),
-    pages: path.join(vault, "pages"),
-    daily: path.join(vault, "daily"),
-    assets: path.join(vault, "assets"),
-  }
-}
-
-const ensureVaultDirs = async (paths: VaultPaths): Promise<void> => {
-  await fs.mkdir(paths.raw, { recursive: true })
-  await fs.mkdir(paths.pages, { recursive: true })
-  await fs.mkdir(paths.daily, { recursive: true })
-  await fs.mkdir(paths.assets, { recursive: true })
-}
-
-const collectStats = async (vaultPaths: VaultPaths): Promise<VaultStats> => {
-  let totalPages = 0
-  let totalDailyLogs = 0
-  let deprecatedPages = 0
-
-  try {
-    const pageFiles = (await fs.readdir(vaultPaths.pages)).filter((f) => f.endsWith(".md"))
-    totalPages = pageFiles.length
-    for (const file of pageFiles) {
-      const content = await fs.readFile(path.join(vaultPaths.pages, file), "utf-8")
-      if (content.includes("DEPRECATED")) {
-        deprecatedPages++
-      }
-    }
-  } catch { /* pages dir may not exist yet */ }
-
-  try {
-    const dailyFiles = (await fs.readdir(vaultPaths.daily)).filter((f) => f.endsWith(".md"))
-    totalDailyLogs = dailyFiles.length
-  } catch { /* daily dir may not exist yet */ }
-
-  return { totalPages, totalDailyLogs, deprecatedPages }
-}
-
-const updateStats = async (directory: string, vaultPaths: VaultPaths): Promise<void> => {
-  const st = await readState(directory)
-  st.stats = await collectStats(vaultPaths)
-  await writeState(directory, st)
-}
-
-const DEFAULT_INDEX = `# EchoesVault Index
-
-Welcome to the EchoesVault knowledge base.
-
-This index tracks all structured pages in the vault.
-`
-
-const sanitizeFilename = (name: string): string => {
-  const cleaned = name.replace(/\.\./g, "").replace(/[\/\\]/g, "")
-  return cleaned || "untitled"
-}
-
-// Normalizes any user/LLM-supplied page name to a safe `*.md` filename,
-// ensuring we never produce duplicates like `foo.md.md`.
-const toPageFilename = (name: string): string => {
-  const safe = sanitizeFilename(name)
-  return safe.endsWith(".md") ? safe : `${safe}.md`
-}
-
-const toPageSlug = (filename: string): string => filename.replace(/\.md$/, "")
-
-const ensureCommands = async (directory: string, commands: Record<string, string>): Promise<void> => {
-  const cmdDir = path.join(directory, ".opencode", "commands")
-  await fs.mkdir(cmdDir, { recursive: true })
-  for (const [name, content] of Object.entries(commands)) {
-    const cmdFile = path.join(cmdDir, name)
-    try {
-      await fs.access(cmdFile)
-    } catch {
-      await fs.writeFile(cmdFile, content)
-    }
-  }
-}
-
-const ensureSkills = async (directory: string, skills: Record<string, string>): Promise<void> => {
-  for (const [name, content] of Object.entries(skills)) {
-    const skillDir = path.join(directory, ".opencode", "skills", name)
-    const skillFile = path.join(skillDir, "SKILL.md")
-    await fs.mkdir(skillDir, { recursive: true })
-    try {
-      await fs.access(skillFile)
-    } catch {
-      await fs.writeFile(skillFile, content)
-    }
-  }
-}
-
-const parseCommandFrontmatter = (cmd: string): { template: string; description?: string; agent?: string } => {
-  const match = cmd.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
-  if (!match) return { template: cmd }
   const frontmatter: Record<string, string> = {}
   for (const line of match[1].split("\n")) {
     const [key, ...rest] = line.split(":")
     if (key && rest.length) frontmatter[key.trim()] = rest.join(":").trim()
   }
-  return { template: match[2], description: frontmatter.description, agent: frontmatter.agent }
+  return {
+    template: match[2],
+    description: frontmatter.description,
+    agent: frontmatter.agent,
+  }
 }
+
+const displayOutput = (output: string): string => output.trimEnd()
 
 const statusActions = {
   "echoes-init": "init",
@@ -196,319 +35,227 @@ const statusActions = {
 
 type StatusAction = (typeof statusActions)[keyof typeof statusActions]
 
-const OpenCodeEchoes: Plugin = async ({ directory }) => {
-  const pluginDir = path.dirname(new URL(import.meta.url).pathname)
-
-  const readPromptFile = async (relativePath: string): Promise<string> => {
-    return await fs.readFile(path.join(pluginDir, "prompts", relativePath), "utf-8")
-  }
-
-  const ECHOES_INIT = await readPromptFile("commands/echoes-init.md")
-  const ECHOES_START = await readPromptFile("commands/echoes-start.md")
-  const ECHOES_END = await readPromptFile("commands/echoes-end.md")
-  const ECHOES_STATUS = await readPromptFile("commands/echoes-status.md")
-
-  const APPEND_TO_DAILY_LOG = await readPromptFile("skills/echoes-append-to-daily-log.md")
-  const SEARCH_VAULT_PAGES = await readPromptFile("skills/echoes-search-vault-pages.md")
-  const CREATE_OR_UPDATE_PAGE = await readPromptFile("skills/echoes-create-or-update-page.md")
+const OpenCodeEchoes: Plugin = async ({ directory, worktree }) => {
+  const readPromptFile = async (relativePath: string): Promise<string> =>
+    await fs.readFile(path.join(PLUGIN_ROOT, "prompts", relativePath), "utf-8")
 
   const commands: Record<string, string> = {
-    "echoes-init.md": ECHOES_INIT,
-    "echoes-start.md": ECHOES_START,
-    "echoes-end.md": ECHOES_END,
-    "echoes-status.md": ECHOES_STATUS,
-  }
-  const skills: Record<string, string> = {
-    "echoes-append-to-daily-log": APPEND_TO_DAILY_LOG,
-    "echoes-search-vault-pages": SEARCH_VAULT_PAGES,
-    "echoes-create-or-update-page": CREATE_OR_UPDATE_PAGE,
+    "echoes-init.md": await readPromptFile("commands/echoes-init.md"),
+    "echoes-start.md": await readPromptFile("commands/echoes-start.md"),
+    "echoes-end.md": await readPromptFile("commands/echoes-end.md"),
+    "echoes-status.md": await readPromptFile("commands/echoes-status.md"),
   }
 
-  const paths = resolveVaultPaths(directory)
-  const indexFile = path.join(paths.vault, "index.md")
-
-  await ensureVaultDirs(paths)
-  try {
-    await fs.access(indexFile)
-  } catch {
-    await fs.writeFile(indexFile, DEFAULT_INDEX)
-  }
-
-  await ensureCommands(directory, commands)
-  await ensureSkills(directory, skills)
-
-  // Sidebar status can change only through the matching user-invoked command.
+  // Lifecycle tools are one-shot capabilities granted only by the matching explicit slash command.
   const authorizedStatusActions = new Map<string, StatusAction>()
+  const fallbackWorkspace = worktree || directory
 
-  const state = await readState(directory)
-  state.pluginVersion = await getPluginVersion()
-  state.stats = await collectStats(paths)
-  await writeState(directory, state)
+  const requireAuthorization = (sessionID: string, expected: StatusAction): void => {
+    if (authorizedStatusActions.get(sessionID) !== expected) {
+      throw new Error(
+        `EchoesVault ${expected} requires the explicit /echoes-${expected} command from the user.`,
+      )
+    }
+  }
 
   return {
     config: async (input) => {
-      input.command = input.command || {}
-      for (const [name, cmd] of Object.entries(commands)) {
-        const { template, description, agent } = parseCommandFrontmatter(cmd)
-        input.command[name.replace(".md", "")] = { template, description, agent }
+      input.command ||= {}
+      for (const [name, command] of Object.entries(commands)) {
+        const { template, description, agent } = parseCommandFrontmatter(command)
+        input.command[name.replace(/\.md$/, "")] = { template, description, agent }
       }
     },
+
     "command.execute.before": async (input) => {
       const command = input.command.replace(/^\//, "") as keyof typeof statusActions
       const action = statusActions[command]
-      if (action) {
-        authorizedStatusActions.set(input.sessionID, action)
-      }
+      if (action) authorizedStatusActions.set(input.sessionID, action)
     },
+
     tool: {
+      echoes_activate_vault: tool({
+        description:
+          "Initialize or explicitly migrate EchoesVault through the shared portable runtime. Available only after /echoes-init.",
+        args: {},
+        async execute(_args, ctx) {
+          requireAuthorization(ctx.sessionID, "init")
+          const output = displayOutput(
+            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "init", {
+              signal: ctx.abort,
+            }),
+          )
+          authorizedStatusActions.delete(ctx.sessionID)
+          return output
+        },
+      }),
+
+      echoes_start_session: tool({
+        description:
+          "Restore the generated index and three most recent EchoesVault session entries. Available only after /echoes-start.",
+        args: {},
+        async execute(_args, ctx) {
+          requireAuthorization(ctx.sessionID, "start")
+          const output = displayOutput(
+            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "start", {
+              args: ["--recent", "3"],
+              signal: ctx.abort,
+            }),
+          )
+          authorizedStatusActions.delete(ctx.sessionID)
+          return output
+        },
+      }),
+
+      echoes_vault_status: tool({
+        description:
+          "Inspect EchoesVault protocol, storage, metadata, index, Git readiness, conflicts, and scale without modifying files.",
+        args: {},
+        async execute(_args, ctx) {
+          return displayOutput(
+            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "status", {
+              args: ["--format", "card"],
+              signal: ctx.abort,
+            }),
+          )
+        },
+      }),
+
       commit_memory_to_echoes_vault: tool({
         description:
-          "Save final session memory to EchoesVault. This succeeds only after the user explicitly runs /echoes-end; never call it merely because a task is complete.",
+          "Finalize an EchoesVault session with one daily summary and optional curated pages. Available only after explicit /echoes-end.",
         args: {
           dailySummary: tool.schema
             .string()
-            .describe(
-              "Detailed summary of the current session: what was accomplished, bugs discovered, where you stopped, and what remains to be done."
-            ),
-          newPages: tool.schema
+            .min(1)
+            .describe("Dense final outcomes, unresolved blockers, and next steps; never a transcript."),
+          pages: tool.schema
             .array(
               tool.schema.object({
-                filename: tool.schema
-                  .string()
-                  .describe("Filename without .md extension (e.g. 'architecture-decisions')"),
+                filename: tool.schema.string().min(1).describe("Safe page filename ending in .md."),
                 content: tool.schema
                   .string()
-                  .describe("Full markdown content of the knowledge base page"),
-              })
-            )
-            .optional()
-            .describe("Array of new knowledge base pages to create in EchoesVault/pages/"),
-          indexAppends: tool.schema
-            .array(tool.schema.string())
-            .optional()
-            .describe("Lines to append to the end of EchoesVault/index.md"),
-          indexUpdates: tool.schema
-            .array(
-              tool.schema.object({
-                oldLine: tool.schema
+                  .min(1)
+                  .describe("Complete page with type, stack, status, and summary frontmatter."),
+                expectedSha256: tool.schema
                   .string()
-                  .describe("The exact line to find and replace in the index"),
-                newLine: tool.schema
-                  .string()
-                  .describe("The replacement line"),
-              })
+                  .optional()
+                  .describe("Fresh current hash, required when replacing an existing page."),
+              }),
             )
-            .optional()
-            .describe("Lines to find and replace in place within EchoesVault/index.md"),
+            .optional(),
         },
         async execute(args, ctx) {
-          if (authorizedStatusActions.get(ctx.sessionID) !== "end") {
-            return [
-              "Final memory was not saved.",
-              "Only an explicit user /echoes-end command can save final memory and set the status to Memory Saved.",
-            ].join("\n")
-          }
-
-          const today = getDateStr()
-
-          await ensureVaultDirs(paths)
-
-          const dailyFile = path.join(paths.daily, `${today}.md`)
-          const timestamp = new Date().toISOString()
-          const header = `## Session — ${timestamp}\n\n`
-          await fs.appendFile(dailyFile, header + args.dailySummary + "\n\n")
-
-          let pagesCreated = 0
-          if (args.newPages && args.newPages.length > 0) {
-            for (const page of args.newPages) {
-              const fileName = toPageFilename(page.filename)
-              const pageFile = path.join(paths.pages, fileName)
-              await fs.writeFile(pageFile, page.content.trim() + "\n")
-              pagesCreated++
-            }
-          }
-
-          const idxFile = path.join(paths.vault, "index.md")
-
-          let indexContent = ""
-          try {
-            indexContent = await fs.readFile(idxFile, "utf-8")
-          } catch {
-            indexContent = DEFAULT_INDEX
-          }
-
-          if (args.indexUpdates && args.indexUpdates.length > 0) {
-            for (const upd of args.indexUpdates) {
-              if (indexContent.includes(upd.oldLine)) {
-                indexContent = indexContent.replaceAll(upd.oldLine, upd.newLine)
-              }
-            }
-          }
-
-          if (args.indexAppends && args.indexAppends.length > 0) {
-            const toAppend = args.indexAppends.join("\n")
-            indexContent = indexContent.trimEnd() + "\n" + toAppend + "\n"
-          }
-
-          await fs.writeFile(idxFile, indexContent)
-
-          const st = await readState(directory)
-          st.session.saved = true
-          st.session.lastSave = new Date().toISOString()
-          st.stats = await collectStats(paths)
-          await writeState(directory, st)
+          requireAuthorization(ctx.sessionID, "end")
+          const output = displayOutput(
+            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "end", {
+              args: ["--confirm-explicit-user-end", "--payload", "-"],
+              payload: {
+                dailySummary: args.dailySummary,
+                pages: args.pages ?? [],
+              },
+              signal: ctx.abort,
+            }),
+          )
           authorizedStatusActions.delete(ctx.sessionID)
-
-          return [
-            `✅ Memory committed to EchoesVault.`,
-            `- Daily log: EchoesVault/daily/${today}.md`,
-            `- Pages created: ${pagesCreated}`,
-            `- Index: updated`,
-          ].join("\n")
+          return output
         },
       }),
+
       echoes_append_to_daily_log: tool({
         description:
-          "Append an intermediate technical note or decision to today's daily log without ending the session.",
+          "Write one intermediate technical milestone to a unique EchoesVault daily entry without ending the session.",
         args: {
           logEntry: tool.schema
             .string()
-            .describe(
-              "Markdown-formatted bullet points to append. Do not include date/time — the system adds a timestamp automatically."
-            ),
+            .min(1)
+            .describe("Concise Markdown facts, decisions, blockers, or next steps."),
         },
-        async execute(args, _ctx) {
-          const today = getDateStr()
-          await ensureVaultDirs(paths)
-          const dailyFile = path.join(paths.daily, `${today}.md`)
-          const timestamp = new Date().toISOString()
-          const entry = `### Scratchpad — ${timestamp}\n\n${args.logEntry}\n\n`
-          await fs.appendFile(dailyFile, entry)
-          await updateStats(directory, paths)
-          return `✅ Scratchpad note saved to EchoesVault/daily/${today}.md`
+        async execute(args, ctx) {
+          return displayOutput(
+            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "append", {
+              args: ["--payload", "-"],
+              payload: { entry: args.logEntry },
+              signal: ctx.abort,
+            }),
+          )
         },
       }),
+
       echoes_search_vault_pages: tool({
         description:
-          "Search the EchoesVault pages/ directory for specific concepts, keywords, or implementation details.",
+          "Search EchoesVault knowledge pages with a narrow keyword or phrase before reading a relevant page.",
         args: {
-          query: tool.schema
-            .string()
-            .describe("Specific keyword or short phrase to search for across the pages/ directory."),
+          query: tool.schema.string().min(1).describe("Specific keyword or short phrase."),
+          limit: tool.schema.number().int().min(1).max(500).optional(),
         },
-        async execute(args, _ctx) {
-          await ensureVaultDirs(paths)
-          const results: string[] = []
-          try {
-            const files = (await fs.readdir(paths.pages)).filter((f) =>
-              f.endsWith(".md")
-            )
-            for (const file of files) {
-              const content = await fs.readFile(
-                path.join(paths.pages, file),
-                "utf-8"
-              )
-              const lines = content.split("\n")
-              for (let i = 0; i < lines.length; i++) {
-                if (
-                  lines[i].toLowerCase().includes(args.query.toLowerCase())
-                ) {
-                  results.push(
-                    `${file}:${i + 1}: ${lines[i].trim().slice(0, 200)}`
-                  )
-                }
-              }
-            }
-          } catch {
-            return "_No pages found in EchoesVault/pages/_"
-          }
-          if (results.length === 0) {
-            return `No results found for "${args.query}" in EchoesVault/pages/.`
-          }
-          return results.join("\n")
+        async execute(args, ctx) {
+          const runtimeArgs = [args.query]
+          if (args.limit !== undefined) runtimeArgs.push("--limit", String(args.limit))
+          return displayOutput(
+            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "search", {
+              args: runtimeArgs,
+              signal: ctx.abort,
+            }),
+          )
         },
       }),
+
+      echoes_hash_vault_page: tool({
+        description:
+          "Calculate the current SHA-256 of an EchoesVault page before replacing that existing page.",
+        args: {
+          filename: tool.schema.string().min(1).describe("Existing page filename."),
+        },
+        async execute(args, ctx) {
+          return displayOutput(
+            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "hash", {
+              args: [args.filename],
+              signal: ctx.abort,
+            }),
+          )
+        },
+      }),
+
       echoes_create_or_update_page: tool({
         description:
-          "Atomically create a new markdown page or update an existing one in EchoesVault/pages/, automatically updating the index if the file is new.",
+          "Create a validated EchoesVault page or replace one using its fresh expected SHA-256; the runtime regenerates the index.",
         args: {
-          filename: tool.schema
-            .string()
-            .describe("Exact filename without paths (e.g. 'auth-architecture.md')."),
+          filename: tool.schema.string().min(1).describe("Exact page filename without paths."),
           content: tool.schema
             .string()
-            .describe("Full markdown content of the page, starting with YAML frontmatter."),
-          indexDescription: tool.schema
+            .min(1)
+            .describe("Complete Markdown page with all required frontmatter."),
+          expectedSha256: tool.schema
             .string()
             .optional()
-            .describe("One-sentence description for the index. Required for new files. Format: '- [[filename]]: description'."),
+            .describe("Fresh current hash, required when replacing an existing page."),
         },
-        async execute(args, _ctx) {
-          await ensureVaultDirs(paths)
-          const fileName = toPageFilename(args.filename)
-          const pageFile = path.join(paths.pages, fileName)
-
-          const existed = await fs.access(pageFile).then(() => true).catch(() => false)
-          await fs.writeFile(pageFile, args.content.trim() + "\n")
-
-          if (!existed && args.indexDescription) {
-            const idxFile = path.join(paths.vault, "index.md")
-            let indexContent = ""
-            try {
-              indexContent = await fs.readFile(idxFile, "utf-8")
-            } catch {
-              indexContent = DEFAULT_INDEX
-            }
-            const link = `[[${toPageSlug(fileName)}]]`
-            if (!indexContent.includes(link)) {
-              indexContent = indexContent.trimEnd() + "\n" + args.indexDescription + "\n"
-              await fs.writeFile(idxFile, indexContent)
-            }
-          }
-
-          await updateStats(directory, paths)
-
-          const action = existed ? "updated" : "created"
-          const parts = [`✅ Page ${action}: EchoesVault/pages/${fileName}`]
-          if (!existed && args.indexDescription) {
-            parts.push(`📑 Index: synced`)
-          }
-          return parts.join("\n")
+        async execute(args, ctx) {
+          return displayOutput(
+            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "upsert", {
+              args: ["--payload", "-"],
+              payload: {
+                filename: args.filename,
+                content: args.content,
+                ...(args.expectedSha256 ? { expectedSha256: args.expectedSha256 } : {}),
+              },
+              signal: ctx.abort,
+            }),
+          )
         },
       }),
-      echoes_activate_vault: tool({
+
+      echoes_hydrate_vault: tool({
         description:
-          "Mark the EchoesVault as activated. This succeeds only after the user explicitly runs /echoes-init.",
+          "Rebuild only ignored local EchoesVault index/state files for an already initialized checkout.",
         args: {},
         async execute(_args, ctx) {
-          if (authorizedStatusActions.get(ctx.sessionID) !== "init") {
-            return "Vault status was not changed. Only an explicit user /echoes-init command can activate EchoesVault."
-          }
-
-          const st = await readState(directory)
-          st.initialized = true
-          st.stats = await collectStats(paths)
-          await writeState(directory, st)
-          authorizedStatusActions.delete(ctx.sessionID)
-          return "EchoesVault activated."
-        },
-      }),
-      echoes_start_session: tool({
-        description:
-          "Mark the current EchoesVault session as started. This succeeds only after the user explicitly runs /echoes-start.",
-        args: {},
-        async execute(_args, ctx) {
-          if (authorizedStatusActions.get(ctx.sessionID) !== "start") {
-            return "Vault status was not changed. Only an explicit user /echoes-start command can start an EchoesVault session."
-          }
-
-          const st = await readState(directory)
-          st.session.started = true
-          st.session.saved = false
-          st.session.lastStart = new Date().toISOString()
-          await writeState(directory, st)
-          authorizedStatusActions.delete(ctx.sessionID)
-          return "EchoesVault session started."
+          return displayOutput(
+            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "hydrate", {
+              signal: ctx.abort,
+            }),
+          )
         },
       }),
     },

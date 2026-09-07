@@ -1,7 +1,7 @@
 {
   "name": "echoes-vault-opencode",
-  "version": "1.2.3",
-  "description": "EchoesVault — persistent memory plugin for OpenCode. Obsidian-style knowledge base with daily logs, encyclopedia pages, and session resumption.",
+  "version": "2.0.0",
+  "description": "OpenCode adapter for the agent-neutral EchoesVault Protocol and repository-local Markdown memory runtime.",
   "type": "module",
   "main": "index.ts",
   "exports": {
@@ -16,9 +16,17 @@
   },
   "files": [
     "index.ts",
+    "runtime.ts",
     "tui.tsx",
-    "prompts/"
+    "prompts/commands/",
+    "scripts/echoes_vault.py",
+    "EchoesProtocol.md"
   ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && node --test tests/*.test.ts",
+    "pack:check": "npm pack --dry-run"
+  },
   "keywords": [
     "opencode",
     "opencode-plugin",
@@ -29,13 +37,16 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@opencode-ai/plugin": ">=1.16.0",
-    "@opentui/solid": ">=0.4.3",
-    "solid-js": ">=1.9.0"
+    "@opencode-ai/plugin": ">=1.16.0 <2",
+    "@opentui/solid": ">=0.4.3 <1",
+    "solid-js": ">=1.9.0 <2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0"
+  },
+  "overrides": {
+    "toml": "^4.2.0"
   },
   "repository": {
     "type": "git",
