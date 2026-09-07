@@ -45,6 +45,24 @@ export class EchoesRuntimeError extends Error {
   }
 }
 
+/**
+ * Prefer OpenCode's current session directory over its worktree hint. Some global-plugin launches
+ * report `/` as the worktree even when the session directory points at the real project.
+ */
+export const resolveEchoesWorkspace = (...candidates: Array<string | undefined>): string => {
+  for (const candidate of candidates) {
+    if (!candidate?.trim()) continue
+    const resolved = path.resolve(candidate)
+    if (resolved !== path.parse(resolved).root) return resolved
+  }
+  throw new EchoesRuntimeError(
+    "OpenCode did not provide a safe project directory. Refusing to use the filesystem root as the EchoesVault workspace.",
+    null,
+    "",
+    "",
+  )
+}
+
 let adapterVersionPromise: Promise<string> | undefined
 
 export const getAdapterVersion = async (): Promise<string> => {
@@ -81,6 +99,7 @@ export const runEchoes = async (
   command: EchoesCommand,
   options: RunEchoesOptions = {},
 ): Promise<string> => {
+  const resolvedWorkspace = resolveEchoesWorkspace(workspace)
   const adapterVersion = options.adapterVersion ?? (await getAdapterVersion())
   const launcher = options.launcherPath ?? BUNDLED_RUNTIME
   const commandArgs = options.args ?? []
@@ -90,7 +109,7 @@ export const runEchoes = async (
   const argv = [
     launcher,
     "--workspace",
-    workspace,
+    resolvedWorkspace,
     "--agent",
     "opencode",
     "--adapter-version",
@@ -101,7 +120,7 @@ export const runEchoes = async (
 
   return await new Promise<string>((resolve, reject) => {
     const child = spawn(python, argv, {
-      cwd: workspace,
+      cwd: resolvedWorkspace,
       stdio: [payload === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     })
     const stdout: Buffer[] = []

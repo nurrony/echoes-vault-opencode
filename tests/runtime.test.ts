@@ -45,11 +45,22 @@ test("plugin load registers tools without initializing or mutating the project",
   })
 })
 
-test("lifecycle writes require the matching explicit slash command", async () => {
+test("runtime refuses the filesystem root as a workspace", async () => {
+  const filesystemRoot = path.parse(process.cwd()).root
+  await assert.rejects(
+    runEchoes(filesystemRoot, "init"),
+    (error: unknown) =>
+      error instanceof EchoesRuntimeError && /Refusing to use the filesystem root/.test(error.message),
+  )
+})
+
+test("lifecycle writes prefer the session directory over a root worktree hint", async () => {
   await withWorkspace(async (workspace) => {
-    const hooks = await OpenCodeEchoes({ directory: workspace, worktree: workspace } as Parameters<
-      typeof OpenCodeEchoes
-    >[0])
+    const filesystemRoot = path.parse(workspace).root
+    const hooks = await OpenCodeEchoes({
+      directory: workspace,
+      worktree: filesystemRoot,
+    } as Parameters<typeof OpenCodeEchoes>[0])
     const activate = hooks.tool?.echoes_activate_vault
     assert.ok(activate)
 
@@ -58,7 +69,7 @@ test("lifecycle writes require the matching explicit slash command", async () =>
       messageID: "message-1",
       agent: "build",
       directory: workspace,
-      worktree: workspace,
+      worktree: filesystemRoot,
       abort: new AbortController().signal,
       metadata() {},
       async ask() {},

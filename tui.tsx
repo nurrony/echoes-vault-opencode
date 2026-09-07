@@ -50,7 +50,7 @@ const readSnapshot = (workspace: string): VaultSnapshot => ({
 
 const tui: TuiPlugin = async (api, _options, meta) => {
   const theme = api.theme.current
-  const workspace = api.state.path.worktree || api.state.path.directory || process.cwd()
+  const workspace = api.state.path.directory || api.state.path.worktree || process.cwd()
 
   api.slots.register({
     slots: {

@@ -3,7 +3,7 @@ import { tool } from "@opencode-ai/plugin"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
-import { runEchoes } from "./runtime.ts"
+import { resolveEchoesWorkspace, runEchoes } from "./runtime.ts"
 
 const PLUGIN_ROOT = path.dirname(fileURLToPath(import.meta.url))
 
@@ -48,7 +48,8 @@ const OpenCodeEchoes: Plugin = async ({ directory, worktree }) => {
 
   // Lifecycle tools are one-shot capabilities granted only by the matching explicit slash command.
   const authorizedStatusActions = new Map<string, StatusAction>()
-  const fallbackWorkspace = worktree || directory
+  const workspaceFor = (contextDirectory?: string, contextWorktree?: string): string =>
+    resolveEchoesWorkspace(contextDirectory, contextWorktree, directory, worktree)
 
   const requireAuthorization = (sessionID: string, expected: StatusAction): void => {
     if (authorizedStatusActions.get(sessionID) !== expected) {
@@ -81,7 +82,7 @@ const OpenCodeEchoes: Plugin = async ({ directory, worktree }) => {
         async execute(_args, ctx) {
           requireAuthorization(ctx.sessionID, "init")
           const output = displayOutput(
-            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "init", {
+            await runEchoes(workspaceFor(ctx.directory, ctx.worktree), "init", {
               signal: ctx.abort,
             }),
           )
@@ -97,7 +98,7 @@ const OpenCodeEchoes: Plugin = async ({ directory, worktree }) => {
         async execute(_args, ctx) {
           requireAuthorization(ctx.sessionID, "start")
           const output = displayOutput(
-            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "start", {
+            await runEchoes(workspaceFor(ctx.directory, ctx.worktree), "start", {
               args: ["--recent", "3"],
               signal: ctx.abort,
             }),
@@ -113,7 +114,7 @@ const OpenCodeEchoes: Plugin = async ({ directory, worktree }) => {
         args: {},
         async execute(_args, ctx) {
           return displayOutput(
-            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "status", {
+            await runEchoes(workspaceFor(ctx.directory, ctx.worktree), "status", {
               args: ["--format", "card"],
               signal: ctx.abort,
             }),
@@ -148,7 +149,7 @@ const OpenCodeEchoes: Plugin = async ({ directory, worktree }) => {
         async execute(args, ctx) {
           requireAuthorization(ctx.sessionID, "end")
           const output = displayOutput(
-            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "end", {
+            await runEchoes(workspaceFor(ctx.directory, ctx.worktree), "end", {
               args: ["--confirm-explicit-user-end", "--payload", "-"],
               payload: {
                 dailySummary: args.dailySummary,
@@ -173,7 +174,7 @@ const OpenCodeEchoes: Plugin = async ({ directory, worktree }) => {
         },
         async execute(args, ctx) {
           return displayOutput(
-            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "append", {
+            await runEchoes(workspaceFor(ctx.directory, ctx.worktree), "append", {
               args: ["--payload", "-"],
               payload: { entry: args.logEntry },
               signal: ctx.abort,
@@ -193,7 +194,7 @@ const OpenCodeEchoes: Plugin = async ({ directory, worktree }) => {
           const runtimeArgs = [args.query]
           if (args.limit !== undefined) runtimeArgs.push("--limit", String(args.limit))
           return displayOutput(
-            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "search", {
+            await runEchoes(workspaceFor(ctx.directory, ctx.worktree), "search", {
               args: runtimeArgs,
               signal: ctx.abort,
             }),
@@ -209,7 +210,7 @@ const OpenCodeEchoes: Plugin = async ({ directory, worktree }) => {
         },
         async execute(args, ctx) {
           return displayOutput(
-            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "hash", {
+            await runEchoes(workspaceFor(ctx.directory, ctx.worktree), "hash", {
               args: [args.filename],
               signal: ctx.abort,
             }),
@@ -233,7 +234,7 @@ const OpenCodeEchoes: Plugin = async ({ directory, worktree }) => {
         },
         async execute(args, ctx) {
           return displayOutput(
-            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "upsert", {
+            await runEchoes(workspaceFor(ctx.directory, ctx.worktree), "upsert", {
               args: ["--payload", "-"],
               payload: {
                 filename: args.filename,
@@ -252,7 +253,7 @@ const OpenCodeEchoes: Plugin = async ({ directory, worktree }) => {
         args: {},
         async execute(_args, ctx) {
           return displayOutput(
-            await runEchoes(ctx.worktree || ctx.directory || fallbackWorkspace, "hydrate", {
+            await runEchoes(workspaceFor(ctx.directory, ctx.worktree), "hydrate", {
               signal: ctx.abort,
             }),
           )
